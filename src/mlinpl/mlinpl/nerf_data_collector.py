@@ -23,19 +23,23 @@ class NerfDataCollector(Node):
         
         # Declare parameters
         self.declare_parameter('image_topic', '/rgb/image_raw')
+        self.declare_parameter('depth_topic', '/depth/image_raw')
         self.declare_parameter('camera_info_topic', '/rgb/camera_info')
         self.declare_parameter('source_frame', 'base_link')
         self.declare_parameter('target_frame', 'azure_rgb')
         self.declare_parameter('output_dir', 'nerf_data')
         self.declare_parameter('collection_rate', 10)
+        self.declare_parameter('use_depth', False)
         
         # Get parameters
         self.image_topic = self.get_parameter('image_topic').value
+        self.depth_topic = self.get_parameter('depth_topic').value
         self.camera_info_topic = self.get_parameter('camera_info_topic').value
         self.source_frame = self.get_parameter('source_frame').value
         self.target_frame = self.get_parameter('target_frame').value
         self.output_dir = self.get_parameter('output_dir').value
         self.collection_rate = self.get_parameter('collection_rate').value
+        self.use_depth = self.get_parameter('use_depth').value
         
         # Initialize
         self.bridge = CvBridge()
@@ -46,11 +50,18 @@ class NerfDataCollector(Node):
         self.collecting = False
         self.start_timer_called = False
         self.latest_image = None
+        self.latest_depth = None
         
         # Create output directory
         self.images_dir = os.path.join(self.output_dir, "images")
+       
+
         os.makedirs(self.images_dir, exist_ok=True)
-        
+
+        if self.use_depth:
+            self.depths_dir = os.path.join(self.output_dir, "depths")
+            os.makedirs(self.depths_dir, exist_ok=True)
+            
         # TF2 setup
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -63,6 +74,10 @@ class NerfDataCollector(Node):
         self.image_sub = self.create_subscription(
             Image, self.image_topic, self.image_callback, 1
         )
+        if self.use_depth:
+            self.depth_sub = self.create_subscription(
+                Image, self.depth_topic, self.depth_callback, 1
+            )
         
         # Collection timer
         # self.collection_timer = self.create_timer(1.0 / self.collection_rate, self.collect_frame)
@@ -81,7 +96,17 @@ class NerfDataCollector(Node):
             self.collect_frame()
 
         self.i += 1
-    
+
+    def depth_callback(self, msg):
+        """Handle depth image if needed."""
+        if not self.collecting:
+            self.get_logger().warn("Not collecting yet, waiting for camera info")
+            return
+        self.latest_depth = msg
+        # For now, we just log that we received a depth image
+        self.get_logger().info(f"Received depth image at {msg.header.stamp}")
+        # You can process the depth image here if needed
+
     def camera_info_callback(self, msg):
         """Get camera parameters once."""
         if self.camera_params is None:
@@ -111,6 +136,10 @@ class NerfDataCollector(Node):
         if self.latest_image is None:
             self.get_logger().warn("No image received yet")
             return
+
+        if self.use_depth and self.latest_depth is None:
+            self.get_logger().warn("No depth image received yet")
+            return
         
         try:
             # Use the latest image
@@ -131,14 +160,32 @@ class NerfDataCollector(Node):
             image_path = os.path.join(self.images_dir, image_filename)
             cv2.imwrite(image_path, cv_img)
             
+            # If using depth, use the latest depth image
+            if self.use_depth:
+                # Use the latest depth image
+                depth_msg = self.latest_depth
+                cv_depth_img = self.bridge.imgmsg_to_cv2(depth_msg, "32FC1")
+                # cv_depth_img = cv2.resize(cv_depth_img, (640, 480))
+                depth_filename = f"frame_{self.frame_count:06d}_depth.jpg"
+                depth_path = os.path.join(self.depths_dir, depth_filename)
+                cv2.imwrite(depth_path, cv_depth_img)
+
             # Convert transform to NeRF format
             nerf_transform = self.ros_to_nerf_transform(transform)
             
             # Store frame data
-            frame_data = {
-                "file_path": f"images/{image_filename}",
-                "transform_matrix": nerf_transform.tolist()
-            }
+            if self.use_depth:
+                frame_data = {
+                    "file_path": f"images/{image_filename}",
+                    "transform_matrix": nerf_transform.tolist(),
+                    "depth_file_path": f"depths/{depth_filename}"
+                }
+            else:
+                frame_data = {
+                    "file_path": f"images/{image_filename}",
+                    "transform_matrix": nerf_transform.tolist()
+                }
+                
             self.frames_data.append(frame_data)
             
             self.frame_count += 1
