@@ -27,7 +27,7 @@ class NerfDataCollector(Node):
         self.declare_parameter('source_frame', 'base_link')
         self.declare_parameter('target_frame', 'azure_rgb')
         self.declare_parameter('output_dir', 'nerf_data')
-        self.declare_parameter('collection_rate', 10.0)
+        self.declare_parameter('collection_rate', 10)
         
         # Get parameters
         self.image_topic = self.get_parameter('image_topic').value
@@ -72,9 +72,11 @@ class NerfDataCollector(Node):
     
     def image_callback(self, msg):
         """Store the latest image."""
+        if not self.collecting:
+            self.get_logger().warn("Not collecting yet, waiting for camera info")
+            return
 
-        if self.i % 10 == self.collection_rate:  # Collect every 10th image
-            self.i = 0
+        if self.i % self.collection_rate == self.collection_rate - 1:  # Collect every nth image
             self.latest_image = msg
             self.collect_frame()
 
@@ -105,8 +107,6 @@ class NerfDataCollector(Node):
     
     def collect_frame(self):
         """Collect one frame (image + pose)."""
-        if not self.collecting:
-            return
         
         if self.latest_image is None:
             self.get_logger().warn("No image received yet")
