@@ -27,7 +27,7 @@ class NerfDataCollector(Node):
         self.declare_parameter('source_frame', 'base_link')
         self.declare_parameter('target_frame', 'azure_rgb')
         self.declare_parameter('output_dir', 'nerf_data')
-        self.declare_parameter('collection_rate', 1.0)  # Hz
+        self.declare_parameter('collection_rate', 10.0)
         
         # Get parameters
         self.image_topic = self.get_parameter('image_topic').value
@@ -73,7 +73,7 @@ class NerfDataCollector(Node):
     def image_callback(self, msg):
         """Store the latest image."""
 
-        if self.i %10 == 0:  # Collect every 10th image
+        if self.i % 10 == self.collection_rate:  # Collect every 10th image
             self.i = 0
             self.latest_image = msg
             self.collect_frame()
